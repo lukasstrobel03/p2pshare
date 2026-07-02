@@ -26,15 +26,17 @@ type Handler func(remote net.Addr, msg *Message) *Message
 
 // Transport 基于 QUIC 实现请求-响应式 RPC，并按地址池化连接。
 type Transport struct {
-	ln        *quic.Listener
-	addr      string
-	nodeID    ID // 由证书公钥派生，重启后稳定
-	tlsClient *tls.Config
-	quicConf  *quic.Config
-	handler   Handler
+	ln      *quic.Listener
+	nodeID  ID // 由证书公钥派生，重启后稳定
+	handler Handler
 
 	mu    sync.Mutex
 	conns map[string]*quic.Conn
+}
+
+var quicConf = &quic.Config{
+	MaxIdleTimeout:  60 * time.Second,
+	KeepAlivePeriod: 20 * time.Second,
 }
 
 // NewTransport 在 certDir 中加载或创建持久化的 TLS 身份。
@@ -48,30 +50,18 @@ func NewTransport(listenAddr, certDir string) (*Transport, error) {
 		NextProtos:   []string{alpn},
 		MinVersion:   tls.VersionTLS13,
 	}
-	quicConf := &quic.Config{
-		MaxIdleTimeout:  60 * time.Second,
-		KeepAlivePeriod: 20 * time.Second,
-	}
 	ln, err := quic.ListenAddr(listenAddr, tlsServer, quicConf)
 	if err != nil {
 		return nil, err
 	}
 	return &Transport{
 		ln:     ln,
-		addr:   ln.Addr().String(),
 		nodeID: nodeID,
-		tlsClient: &tls.Config{
-			InsecureSkipVerify: true, // 自签名；身份由 NodeID=hash(pubkey) 自认证，见 VerifyPeer
-			NextProtos:         []string{alpn},
-			MinVersion:         tls.VersionTLS13,
-		},
-		quicConf: quicConf,
-		conns:    make(map[string]*quic.Conn),
+		conns:  make(map[string]*quic.Conn),
 	}, nil
 }
 
 func (t *Transport) SetHandler(h Handler) { t.handler = h }
-func (t *Transport) Addr() string         { return t.addr }
 func (t *Transport) NodeID() ID           { return t.nodeID }
 
 func (t *Transport) Serve(ctx context.Context) {
@@ -152,7 +142,13 @@ func (t *Transport) getConn(ctx context.Context, addr string) (*quic.Conn, error
 	if ok {
 		return c, nil
 	}
-	conn, err := quic.DialAddr(ctx, addr, t.tlsClient, t.quicConf)
+
+	tlsClient := &tls.Config{
+		InsecureSkipVerify: true, // 自签名；身份由 NodeID=hash(pubkey) 自认证，见 VerifyPeer
+		NextProtos:         []string{alpn},
+		MinVersion:         tls.VersionTLS13,
+	}
+	conn, err := quic.DialAddr(ctx, addr, tlsClient, quicConf)
 	if err != nil {
 		return nil, err
 	}

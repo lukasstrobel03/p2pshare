@@ -5,38 +5,38 @@ import (
 	"sync"
 )
 
-// PingFunc 由 Kademlia 注入，用于探测桶中最旧节点是否存活。
-type PingFunc func(Contact) bool
+// pingFunc 由 Kademlia 注入，用于探测桶中最旧节点是否存活。
+type pingFunc func(Contact) bool
 
-// RoutingTable 是按 XOR 距离最高有效位分桶的 k-bucket 路由表。
-type RoutingTable struct {
-	self    ID
+// routingTable 是按 XOR 距离最高有效位分桶的 k-bucket 路由表。
+type routingTable struct {
+	myid    ID
 	k       int
-	mu      sync.Mutex
-	buckets [256][]Contact // 索引 = 与 self 的 XOR 距离前导零位数
-	ping    PingFunc
+	mu      sync.RWMutex
+	buckets [256][]Contact // 索引 = 与 myid 的 XOR 距离前导零位数
+	ping    pingFunc
 }
 
-func NewRoutingTable(self ID, k int) *RoutingTable {
-	return &RoutingTable{self: self, k: k}
+func newRoutingTable(myid ID, k int) *routingTable {
+	return &routingTable{myid: myid, k: k}
 }
 
-func (rt *RoutingTable) SetPing(p PingFunc) { rt.ping = p }
+func (rt *routingTable) setPing(p pingFunc) { rt.ping = p }
 
-func bucketIndex(self, other ID) int {
-	lz := self.Xor(other).LeadingZeros()
+func bucketIndex(myid, other ID) int {
+	lz := myid.xor(other).leadingZeros()
 	if lz >= 256 {
-		return 255
+		panic("mistakenly try to add myself to the routing table")
 	}
 	return lz
 }
 
-// Update 把一个 contact 加入路由表，实现 Kademlia 的 LRU + 存活探测策略。
-func (rt *RoutingTable) Update(c Contact) {
-	if c.ID == rt.self || c.ID.IsZero() || c.Addr == "" {
+// update 把一个 contact 加入路由表，实现 Kademlia 的 LRU + 存活探测策略。
+func (rt *routingTable) update(c Contact) {
+	if c.ID == rt.myid || c.ID.isZero() || c.Addr == "" {
 		return
 	}
-	idx := bucketIndex(rt.self, c.ID)
+	idx := bucketIndex(rt.myid, c.ID)
 
 	rt.mu.Lock()
 	b := rt.buckets[idx]
@@ -61,7 +61,7 @@ func (rt *RoutingTable) Update(c Contact) {
 	go rt.tryReplace(idx, oldest, c)
 }
 
-func (rt *RoutingTable) tryReplace(idx int, oldest, cand Contact) {
+func (rt *routingTable) tryReplace(idx int, oldest, cand Contact) {
 	alive := rt.ping != nil && rt.ping(oldest)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -76,16 +76,16 @@ func (rt *RoutingTable) tryReplace(idx int, oldest, cand Contact) {
 	}
 }
 
-// Closest 返回与 target 最近的 count 个节点。
-func (rt *RoutingTable) Closest(target ID, count int) []Contact {
-	rt.mu.Lock()
+// closest 返回与 target 最近的 count 个节点。
+func (rt *routingTable) closest(target ID, count int) []Contact {
+	rt.mu.RLock()
 	var all []Contact
 	for _, b := range rt.buckets {
 		all = append(all, b...)
 	}
-	rt.mu.Unlock()
+	rt.mu.RUnlock()
 	sort.Slice(all, func(i, j int) bool {
-		return target.Xor(all[i].ID).Less(target.Xor(all[j].ID))
+		return target.xor(all[i].ID).less(target.xor(all[j].ID))
 	})
 	if len(all) > count {
 		all = all[:count]
@@ -93,9 +93,9 @@ func (rt *RoutingTable) Closest(target ID, count int) []Contact {
 	return all
 }
 
-func (rt *RoutingTable) AllContacts() []Contact {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+func (rt *routingTable) allContacts() []Contact {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
 	var all []Contact
 	for _, b := range rt.buckets {
 		all = append(all, b...)

@@ -9,7 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
+	"errors"
 	"math/big"
 	"net"
 	"os"
@@ -170,7 +170,7 @@ func (t *Transport) dropConn(addr string) {
 func PeerID(conn *quic.Conn) (ID, error) {
 	certs := conn.ConnectionState().TLS.PeerCertificates
 	if len(certs) == 0 {
-		return ID{}, fmt.Errorf("no peer certificate")
+		return ID{}, errors.New("no peer certificate")
 	}
 	return nodeIDFromPublicKey(certs[0].PublicKey)
 }

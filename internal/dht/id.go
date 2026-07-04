@@ -28,8 +28,8 @@ func ParseID(s string) (ID, error) {
 
 func (id ID) String() string { return hex.EncodeToString(id[:]) }
 
-// Xor 返回 XOR 距离度量结果。
-func (a ID) Xor(b ID) ID {
+// xor 返回 XOR 距离度量结果。
+func (a ID) xor(b ID) ID {
 	var r ID
 	for i := range a {
 		r[i] = a[i] ^ b[i]
@@ -37,11 +37,11 @@ func (a ID) Xor(b ID) ID {
 	return r
 }
 
-// Less 把 ID 当作大端无符号整数比较，用于按距离排序。
-func (id ID) Less(o ID) bool { return bytes.Compare(id[:], o[:]) < 0 }
+// less 把 ID 当作大端无符号整数比较，用于按距离排序。
+func (id ID) less(o ID) bool { return bytes.Compare(id[:], o[:]) < 0 }
 
-// LeadingZeros 返回前导零比特数（0..256），用于决定 k-bucket 下标。
-func (id ID) LeadingZeros() int {
+// leadingZeros 返回前导零比特数（0..256），用于决定 k-bucket 下标。
+func (id ID) leadingZeros() int {
 	n := 0
 	for _, b := range id {
 		if b == 0 {
@@ -54,7 +54,7 @@ func (id ID) LeadingZeros() int {
 	return n
 }
 
-func (id ID) IsZero() bool {
+func (id ID) isZero() bool {
 	var zero ID
 	return id == zero
 }

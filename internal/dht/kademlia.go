@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	K           = 20 // bucket 大小 / 冗余副本数
-	Alpha       = 3  // 查找并发度
+	k           = 20 // bucket 大小 / 冗余副本数
+	alpha       = 3  // 查找并发度
 	rpcTimeout  = 5 * time.Second
 	valueTTL    = time.Hour
 	providerTTL = 30 * time.Minute
@@ -31,7 +31,7 @@ type ValueSource func(key ID) ([]byte, bool)
 type Kademlia struct {
 	self Contact
 	t    *Transport
-	rt   *RoutingTable
+	rt   *routingTable
 
 	mu        sync.Mutex
 	values    map[ID]valueEntry
@@ -57,11 +57,11 @@ func NewKademlia(self Contact, t *Transport) *Kademlia {
 	kad := &Kademlia{
 		self:      self,
 		t:         t,
-		rt:        NewRoutingTable(self.ID, K),
+		rt:        newRoutingTable(self.ID, k),
 		values:    make(map[ID]valueEntry),
 		providers: make(map[ID]map[string]providerEntry),
 	}
-	kad.rt.SetPing(func(c Contact) bool {
+	kad.rt.setPing(func(c Contact) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 		defer cancel()
 		resp, err := kad.sendRPC(ctx, c, &Message{Type: TypePing})
@@ -71,7 +71,7 @@ func NewKademlia(self Contact, t *Transport) *Kademlia {
 }
 
 func (kad *Kademlia) Self() Contact    { return kad.self }
-func (kad *Kademlia) Peers() []Contact { return kad.rt.AllContacts() }
+func (kad *Kademlia) Peers() []Contact { return kad.rt.allContacts() }
 
 func (kad *Kademlia) sendRPC(ctx context.Context, c Contact, m *Message) (*Message, error) {
 	m.Sender = kad.self
@@ -82,27 +82,27 @@ func (kad *Kademlia) sendRPC(ctx context.Context, c Contact, m *Message) (*Messa
 
 func (kad *Kademlia) HandleRPC(_ net.Addr, msg *Message) *Message {
 	if msg.Sender.Addr != "" {
-		kad.rt.Update(msg.Sender)
+		kad.rt.update(msg.Sender)
 	}
 	resp := &Message{Sender: kad.self, Type: msg.Type}
 	switch msg.Type {
 	case TypePing:
 		resp.Type = TypePong
 	case TypeFindNode:
-		resp.Contacts = kad.rt.Closest(msg.Target, K)
+		resp.Contacts = kad.rt.closest(msg.Target, k)
 	case TypeStore:
 		kad.putValue(msg.Key, msg.Value)
 	case TypeFindValue:
 		if v, ok := kad.getValueOrLocal(msg.Key); ok { // 改这里
 			resp.Value, resp.Found = v, true
 		} else {
-			resp.Contacts = kad.rt.Closest(msg.Key, K)
+			resp.Contacts = kad.rt.closest(msg.Key, k)
 		}
 	case TypeAddProvider:
 		kad.addProvider(msg.Key, msg.Sender)
 	case TypeGetProviders:
 		resp.Providers = kad.localProviders(msg.Key)
-		resp.Contacts = kad.rt.Closest(msg.Key, K)
+		resp.Contacts = kad.rt.closest(msg.Key, k)
 	default:
 		resp.Error = "unknown rpc"
 	}
@@ -189,12 +189,12 @@ type lookupOutcome struct {
 }
 
 func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
-	sl := newShortlist(target, K)
-	sl.push(kad.rt.Closest(target, K))
+	sl := newShortlist(target, k)
+	sl.push(kad.rt.closest(target, k))
 	provs := make(map[string]Contact)
 
 	for {
-		batch := sl.selectAlpha(Alpha)
+		batch := sl.selectAlpha(alpha)
 		if len(batch) == 0 {
 			break // 最近 K 个节点均已查询，收敛
 		}
@@ -222,7 +222,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 				continue
 			}
 			sl.markQueried(r.from.ID)
-			kad.rt.Update(r.from)
+			kad.rt.update(r.from)
 			if mode == modeFindValue && r.msg.Found {
 				return lookupOutcome{value: r.msg.Value, found: true}
 			}
@@ -237,7 +237,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 		}
 	}
 
-	out := lookupOutcome{closest: sl.closest(K)}
+	out := lookupOutcome{closest: sl.closest(k)}
 	for _, c := range provs {
 		out.providers = append(out.providers, c)
 	}
@@ -252,7 +252,7 @@ func (kad *Kademlia) Bootstrap(ctx context.Context, addrs []string) error {
 		resp, err := kad.t.Send(cctx, a, &Message{Type: TypePing, Sender: kad.self})
 		cancel()
 		if err == nil && resp != nil {
-			kad.rt.Update(resp.Sender)
+			kad.rt.update(resp.Sender)
 		}
 	}
 	kad.lookup(kad.self.ID, modeFindNode) // 自查找以填充路由表
@@ -341,20 +341,20 @@ func newShortlist(target ID, k int) *shortlist {
 
 func (s *shortlist) push(cs []Contact) {
 	for _, c := range cs {
-		if c.Addr == "" || c.ID.IsZero() {
+		if c.Addr == "" || c.ID.isZero() {
 			continue
 		}
 		if _, ok := s.seen[c.ID]; ok {
 			continue
 		}
-		it := &slItem{c: c, dist: s.target.Xor(c.ID)}
+		it := &slItem{c: c, dist: s.target.xor(c.ID)}
 		s.seen[c.ID] = it
 		s.items = append(s.items, it)
 	}
 }
 
 func (s *shortlist) sortItems() {
-	sort.Slice(s.items, func(i, j int) bool { return s.items[i].dist.Less(s.items[j].dist) })
+	sort.Slice(s.items, func(i, j int) bool { return s.items[i].dist.less(s.items[j].dist) })
 }
 
 // selectAlpha 在"最近 K 个未失败节点"窗口内挑选至多 a 个待查询节点。

@@ -167,16 +167,26 @@ func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (stri
 		}
 		var got []byte
 		for _, p := range providers {
-			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			resp, rerr := n.t.Send(cctx, p, &dht.Message{Type: dht.TypeGetChunk, Key: cid})
-			cancel()
-			if rerr != nil || resp == nil || resp.Error != "" || !resp.Found {
+			value := []byte{}
+			if p.ID == n.myid {
+				data, err := n.store.GetChunk(cid)
+				if err != nil {
+					continue
+				}
+				value = data
+			} else {
+				cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				resp, rerr := n.t.Send(cctx, p, &dht.Message{Type: dht.TypeGetChunk, Key: cid})
+				cancel()
+				if rerr != nil || resp == nil || resp.Error != "" || !resp.Found {
+					continue
+				}
+				value = resp.Value
+			}
+			if ChunkID(value) != cid { // 完整性校验
 				continue
 			}
-			if ChunkID(resp.Value) != cid { // 完整性校验
-				continue
-			}
-			got = resp.Value
+			got = value
 			break
 		}
 		if got == nil {

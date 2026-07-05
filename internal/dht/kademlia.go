@@ -90,7 +90,7 @@ func (kad *Kademlia) HandleRPC(remote net.Addr, msg *Message) *Message {
 	case TypePing:
 		resp.Type = TypePong
 	case TypeFindNode:
-		resp.Contacts = kad.rt.closest(msg.Target, k)
+		resp.Contacts = kad.rt.closest(msg.Key, k)
 	case TypeStore:
 		kad.putValue(msg.Key, msg.Value)
 	case TypeFindValue:
@@ -132,7 +132,7 @@ func (kad *Kademlia) getValue(k ID) ([]byte, bool) {
 }
 
 func (kad *Kademlia) addProvider(k ID, c Contact) {
-	if c.Addr == "" {
+	if k.isZero() || c.ID.isZero() {
 		return
 	}
 	kad.mu.Lock()
@@ -191,7 +191,7 @@ type lookupOutcome struct {
 func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 	sl := newShortlist(target)
 	sl.push(kad.rt.closest(target, k))
-	provs := make(map[string]Contact)
+	provs := []Contact{}
 
 	for {
 		batch := sl.selectAlpha(alpha)
@@ -210,7 +210,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 				ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 				defer cancel()
 				resp, err := kad.sendRPC(ctx, c, &Message{
-					Type: typeForMode(mode), Target: target, Key: target,
+					Type: typeForMode(mode), Key: target,
 				})
 				ch <- result{c, resp, err}
 			}(c)
@@ -228,9 +228,11 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 			}
 			if mode == modeProviders {
 				for _, p := range r.msg.Providers {
-					if p.Addr != "" {
-						provs[p.Addr] = p
+					// Addr == "" 表示被请求节点本身提供此文件
+					if p.Addr == "" {
+						p.Addr = r.from.Addr
 					}
+					provs = append(provs, p)
 				}
 			}
 			sl.push(r.msg.Contacts)
@@ -238,9 +240,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 	}
 
 	out := lookupOutcome{closest: sl.closest(k)}
-	for _, c := range provs {
-		out.providers = append(out.providers, c)
-	}
+	out.providers = provs
 	return out
 }
 
@@ -283,8 +283,8 @@ func (kad *Kademlia) FindValue(key ID) ([]byte, bool) {
 }
 
 func (kad *Kademlia) Announce(key ID) int {
-	// need to fix
-	// kad.addProvider(key, kad.myid)
+	// Addr: "" 表示节点本身提供此文件
+	kad.addProvider(key, Contact{ID: kad.myid, Addr: ""})
 	out := kad.lookup(key, modeFindNode)
 	n := 0
 	for _, c := range out.closest {
@@ -299,19 +299,15 @@ func (kad *Kademlia) Announce(key ID) int {
 }
 
 func (kad *Kademlia) FindProviders(key ID) []Contact {
-	res := make(map[string]Contact)
+	res := []Contact{}
 	for _, c := range kad.localProviders(key) {
-		res[c.Addr] = c
+		res = append(res, c)
 	}
 	out := kad.lookup(key, modeProviders)
 	for _, c := range out.providers {
-		res[c.Addr] = c
+		res = append(res, c)
 	}
-	var list []Contact
-	for _, c := range res {
-		list = append(list, c)
-	}
-	return list
+	return res
 }
 
 // ---------- shortlist：迭代查找的候选集 ----------

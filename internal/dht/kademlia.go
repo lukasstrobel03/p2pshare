@@ -2,6 +2,7 @@ package dht
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sort"
 	"sync"
@@ -35,7 +36,7 @@ type Kademlia struct {
 
 	mu        sync.Mutex
 	values    map[ID]valueEntry
-	providers map[ID]map[string]providerEntry
+	providers map[ID][]providerEntry
 
 	localValue ValueSource // 新增
 }
@@ -59,7 +60,7 @@ func NewKademlia(myid ID, t *Transport) *Kademlia {
 		t:         t,
 		rt:        newRoutingTable(myid, k),
 		values:    make(map[ID]valueEntry),
-		providers: make(map[ID]map[string]providerEntry),
+		providers: make(map[ID][]providerEntry),
 	}
 	kad.rt.setPing(func(c Contact) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
@@ -136,12 +137,7 @@ func (kad *Kademlia) addProvider(k ID, c Contact) {
 		return
 	}
 	kad.mu.Lock()
-	m := kad.providers[k]
-	if m == nil {
-		m = make(map[string]providerEntry)
-		kad.providers[k] = m
-	}
-	m[c.Addr] = providerEntry{c: c, exp: time.Now().Add(providerTTL)}
+	kad.providers[k] = append(kad.providers[k], providerEntry{c: c, exp: time.Now().Add(providerTTL)})
 	kad.mu.Unlock()
 }
 
@@ -151,12 +147,14 @@ func (kad *Kademlia) localProviders(k ID) []Contact {
 	m := kad.providers[k]
 	var out []Contact
 	now := time.Now()
-	for addr, e := range m {
-		if now.After(e.exp) {
-			delete(m, addr)
+	for iter := len(m) - 1; iter >= 0; iter-- {
+		if now.After(m[iter].exp) {
+			// delete m[iter] from the slice
+			m[iter] = m[len(m)-1]
+			m = m[:len(m)-1]
 			continue
 		}
-		out = append(out, e.c)
+		out = append(out, m[iter].c)
 	}
 	return out
 }
@@ -177,8 +175,10 @@ func typeForMode(m lookupMode) string {
 		return TypeFindValue
 	case modeProviders:
 		return TypeGetProviders
-	default:
+	case modeFindNode:
 		return TypeFindNode
+	default:
+		panic(fmt.Sprintf("unexpected lookupMode: %d", m))
 	}
 }
 
@@ -190,7 +190,7 @@ type lookupOutcome struct {
 }
 
 func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
-	sl := newShortlist(target, k)
+	sl := newShortlist(target)
 	sl.push(kad.rt.closest(target, k))
 	provs := make(map[string]Contact)
 
@@ -332,13 +332,12 @@ type slItem struct {
 
 type shortlist struct {
 	target ID
-	k      int
 	items  []*slItem
 	seen   map[ID]*slItem
 }
 
-func newShortlist(target ID, k int) *shortlist {
-	return &shortlist{target: target, k: k, seen: make(map[ID]*slItem)}
+func newShortlist(target ID) *shortlist {
+	return &shortlist{target: target, seen: make(map[ID]*slItem)}
 }
 
 func (s *shortlist) push(cs []Contact) {
@@ -349,7 +348,7 @@ func (s *shortlist) push(cs []Contact) {
 		if _, ok := s.seen[c.ID]; ok {
 			continue
 		}
-		it := &slItem{c: c, dist: s.target.xor(c.ID)}
+		it := &slItem{c: c, dist: s.target.xor(c.ID), state: stPending}
 		s.seen[c.ID] = it
 		s.items = append(s.items, it)
 	}
@@ -369,7 +368,7 @@ func (s *shortlist) selectAlpha(a int) []Contact {
 			continue
 		}
 		window++
-		if window > s.k {
+		if window > k {
 			break
 		}
 		if it.state == stPending {

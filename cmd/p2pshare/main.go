@@ -20,14 +20,13 @@ func main() {
 	dataDir := flag.String("data", "./p2pdata", "数据目录")
 	flag.Parse()
 
-	n, err := node.New(*addr, *dataDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n, err := node.StartNode(*addr, *dataDir, ctx)
 	if err != nil {
 		log.Fatalf("create node: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	n.Start(ctx)
 	n.StartRepublish(ctx, 15*time.Minute) // 新增
 
 	srv := &http.Server{Addr: *rpcAddr, Handler: rpcapi.New(n)}

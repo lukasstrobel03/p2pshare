@@ -106,7 +106,7 @@ func (s *Server) dispatch(method string, params json.RawMessage) (interface{}, *
 			FileID string `json:"id"`
 			OutDir string `json:"outdir"`
 		}
-		if err := json.Unmarshal(params, &p); err != nil || p.FileID == "" || p.OutDir == "" {
+		if err := json.Unmarshal(params, &p); err != nil || p.FileID == "" {
 			return nil, &rpcError{-32602, "invalid params: need {id, outdir}"}
 		}
 		id, err := dht.ParseID(p.FileID)

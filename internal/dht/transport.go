@@ -33,7 +33,7 @@ type Contact struct {
 
 // Transport 基于 QUIC 实现请求-响应式 RPC，并按地址池化连接。
 type Transport struct {
-	ln      *quic.Listener
+	qt      *quic.Transport
 	nodeID  ID // 由证书公钥派生，重启后稳定
 	handler Handler
 
@@ -46,40 +46,47 @@ var quicConf = &quic.Config{
 	KeepAlivePeriod: 20 * time.Second,
 }
 
-// NewTransport 在 certDir 中加载或创建持久化的 TLS 身份。
-func NewTransport(listenAddr, certDir string) (*Transport, error) {
+// StartTransport 在 certDir 中加载或创建持久化的 TLS 身份。
+func StartTransport(listenAddr, certDir string, ctx context.Context) (*Transport, error) {
 	cert, nodeID, err := loadOrCreateIdentity(certDir)
 	if err != nil {
 		return nil, err
 	}
+	socket, err := net.ListenPacket("udp", listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	qt := &quic.Transport{Conn: socket}
 	tlsServer := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		NextProtos:   []string{alpn},
 		MinVersion:   tls.VersionTLS13,
 	}
-	ln, err := quic.ListenAddr(listenAddr, tlsServer, quicConf)
+	ln, err := qt.Listen(tlsServer, quicConf)
 	if err != nil {
+		qt.Close()
 		return nil, err
 	}
-	return &Transport{
-		ln:     ln,
+	t := &Transport{
+		qt:     qt,
 		nodeID: nodeID,
 		conns:  make(map[string]*quic.Conn),
-	}, nil
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept(ctx)
+			if err != nil {
+				break
+			}
+			go t.serveConn(ctx, conn)
+		}
+		qt.Close()
+	}()
+	return t, nil
 }
 
 func (t *Transport) SetHandler(h Handler) { t.handler = h }
 func (t *Transport) NodeID() ID           { return t.nodeID }
-
-func (t *Transport) Serve(ctx context.Context) {
-	for {
-		conn, err := t.ln.Accept(ctx)
-		if err != nil {
-			return
-		}
-		go t.serveConn(ctx, conn)
-	}
-}
 
 func (t *Transport) serveConn(ctx context.Context, conn *quic.Conn) {
 	for {
@@ -183,7 +190,11 @@ func (t *Transport) getConn(ctx context.Context, c Contact) (*quic.Conn, error) 
 			return nil
 		},
 	}
-	conn, err := quic.DialAddr(ctx, c.Addr, tlsClient, quicConf)
+	addr, err := net.ResolveUDPAddr("udp", c.Addr)
+	if err != nil {
+		return nil, err
+	}
+	conn, err = t.qt.Dial(ctx, addr, tlsClient, quicConf)
 	if err != nil {
 		return nil, err
 	}

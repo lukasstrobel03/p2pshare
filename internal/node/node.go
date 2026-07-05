@@ -25,11 +25,11 @@ type Node struct {
 	myid  dht.ID
 }
 
-// New 创建节点
+// StartNode 创建节点
 // 单机测试请使用形如 127.0.0.1:9000 的具体地址。
-func New(listenAddr, dataDir string) (*Node, error) {
+func StartNode(listenAddr, dataDir string, ctx context.Context) (*Node, error) {
 	certDir := filepath.Join(dataDir, "identity")
-	t, err := dht.NewTransport(listenAddr, certDir)
+	t, err := dht.StartTransport(listenAddr, certDir, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +68,9 @@ func (n *Node) handle(remote net.Addr, msg *dht.Message) *dht.Message {
 	return n.kad.HandleRPC(remote, msg)
 }
 
-func (n *Node) Start(ctx context.Context) { go n.t.Serve(ctx) }
-func (n *Node) Myid() dht.ID              { return n.myid }
-func (n *Node) Peers() []dht.Contact      { return n.kad.Peers() }
-func (n *Node) Manifests() []*Manifest    { return n.store.Manifests() }
+func (n *Node) Myid() dht.ID           { return n.myid }
+func (n *Node) Peers() []dht.Contact   { return n.kad.Peers() }
+func (n *Node) Manifests() []*Manifest { return n.store.Manifests() }
 func (n *Node) Bootstrap(ctx context.Context, contacts []dht.Contact) error {
 	return n.kad.Bootstrap(ctx, contacts)
 }
@@ -144,6 +143,7 @@ func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (stri
 	}
 	rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
 
+	outdir = filepath.Clean(outdir)
 	if err := os.MkdirAll(outdir, 0o777); err != nil {
 		return "", err
 	}

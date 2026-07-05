@@ -19,12 +19,6 @@ const (
 	TypeGetChunk     = "GET_CHUNK" // 文件层使用
 )
 
-// Contact 是一个可达节点。
-type Contact struct {
-	ID   ID     `json:"id"`
-	Addr string `json:"addr"`
-}
-
 // Message 同时用于请求和响应，保持线协议简单。
 type Message struct {
 	Type      string    `json:"type"`

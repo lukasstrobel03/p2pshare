@@ -25,6 +25,12 @@ const alpn = "p2pshare/1.0"
 // Handler 处理收到的请求并返回响应。
 type Handler func(remote net.Addr, msg *Message) *Message
 
+// Contact 是一个可达节点。
+type Contact struct {
+	ID   ID     `json:"id"`
+	Addr string `json:"addr"`
+}
+
 // Transport 基于 QUIC 实现请求-响应式 RPC，并按地址池化连接。
 type Transport struct {
 	ln      *quic.Listener
@@ -99,22 +105,25 @@ func (t *Transport) serveStream(conn *quic.Conn, stream *quic.Stream) {
 	if resp == nil {
 		resp = &Message{Type: req.Type, Error: "no handler"}
 	}
-	_ = writeMsg(stream, resp)
+	resp.Sender = t.nodeID
+	writeMsg(stream, resp)
 }
 
 // Send 向 addr 发起一次请求并等待响应。
-func (t *Transport) Send(ctx context.Context, addr string, msg *Message) (*Message, error) {
-	conn, err := t.getConn(ctx, addr)
+func (t *Transport) Send(ctx context.Context, c Contact, msg *Message) (*Message, error) {
+	msg.Sender = t.nodeID
+	conn, err := t.getConn(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		t.dropConn(addr)
-		if conn, err = t.getConn(ctx, addr); err != nil {
+		t.dropConn(c.Addr)
+		if conn, err = t.getConn(ctx, c); err != nil {
 			return nil, err
 		}
 		if stream, err = conn.OpenStreamSync(ctx); err != nil {
+			t.dropConn(c.Addr)
 			return nil, err
 		}
 	}
@@ -125,36 +134,61 @@ func (t *Transport) Send(ctx context.Context, addr string, msg *Message) (*Messa
 	if err := writeMsg(stream, msg); err != nil {
 		return nil, err
 	}
-	return readMsg(stream)
+	resp, err := readMsg(stream)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Sender != c.ID {
+		t.dropConn(c.Addr)
+		return nil, errors.New("invalid sender")
+	}
+	return resp, nil
 }
 
-func (t *Transport) getConn(ctx context.Context, addr string) (*quic.Conn, error) {
+func (t *Transport) getConn(ctx context.Context, c Contact) (*quic.Conn, error) {
 	t.mu.Lock()
-	c, ok := t.conns[addr]
+	conn, ok := t.conns[c.Addr]
 	if ok {
 		select {
-		case <-c.Context().Done():
-			delete(t.conns, addr)
+		case <-conn.Context().Done():
+			delete(t.conns, c.Addr)
 			ok = false
 		default:
 		}
 	}
 	t.mu.Unlock()
 	if ok {
-		return c, nil
+		return conn, nil
 	}
 
 	tlsClient := &tls.Config{
 		InsecureSkipVerify: true, // 自签名；身份由 NodeID=hash(pubkey) 自认证，见 VerifyPeer
 		NextProtos:         []string{alpn},
 		MinVersion:         tls.VersionTLS13,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("no certificate provided by the server")
+			}
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return err
+			}
+			id, err := nodeIDFromPublicKey(cert.PublicKey)
+			if err != nil {
+				return err
+			}
+			if id != c.ID {
+				return errors.New("invalid certificate")
+			}
+			return nil
+		},
 	}
-	conn, err := quic.DialAddr(ctx, addr, tlsClient, quicConf)
+	conn, err := quic.DialAddr(ctx, c.Addr, tlsClient, quicConf)
 	if err != nil {
 		return nil, err
 	}
 	t.mu.Lock()
-	t.conns[addr] = conn
+	t.conns[c.Addr] = conn
 	t.mu.Unlock()
 	return conn, nil
 }
@@ -163,16 +197,6 @@ func (t *Transport) dropConn(addr string) {
 	t.mu.Lock()
 	delete(t.conns, addr)
 	t.mu.Unlock()
-}
-
-// PeerID 从一条已建立连接的对端证书反算其 NodeID，
-// 用于校验 "宣称的 ID" 是否与公钥匹配（自认证）。
-func PeerID(conn *quic.Conn) (ID, error) {
-	certs := conn.ConnectionState().TLS.PeerCertificates
-	if len(certs) == 0 {
-		return ID{}, errors.New("no peer certificate")
-	}
-	return nodeIDFromPublicKey(certs[0].PublicKey)
 }
 
 // ---------- 证书持久化与身份派生 ----------

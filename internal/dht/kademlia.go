@@ -74,8 +74,7 @@ func NewKademlia(myid ID, t *Transport) *Kademlia {
 func (kad *Kademlia) Peers() []Contact { return kad.rt.allContacts() }
 
 func (kad *Kademlia) sendRPC(ctx context.Context, c Contact, m *Message) (*Message, error) {
-	m.Sender = kad.myid
-	return kad.t.Send(ctx, c.Addr, m)
+	return kad.t.Send(ctx, c, m)
 }
 
 // ---------- 服务端：处理收到的 RPC ----------
@@ -86,7 +85,7 @@ func (kad *Kademlia) HandleRPC(remote net.Addr, msg *Message) *Message {
 		contact = Contact{ID: msg.Sender, Addr: remote.String()}
 		kad.rt.update(contact)
 	}
-	resp := &Message{Sender: kad.myid, Type: msg.Type}
+	resp := &Message{Type: msg.Type}
 	switch msg.Type {
 	case TypePing:
 		resp.Type = TypePong
@@ -247,13 +246,13 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 
 // ---------- 对外 DHT 操作 ----------
 
-func (kad *Kademlia) Bootstrap(ctx context.Context, addrs []string) error {
-	for _, a := range addrs {
+func (kad *Kademlia) Bootstrap(ctx context.Context, contacts []Contact) error {
+	for _, c := range contacts {
 		cctx, cancel := context.WithTimeout(ctx, rpcTimeout)
-		resp, err := kad.t.Send(cctx, a, &Message{Type: TypePing, Sender: kad.myid})
+		resp, err := kad.t.Send(cctx, c, &Message{Type: TypePing})
 		cancel()
 		if err == nil && resp != nil {
-			kad.rt.update(Contact{ID: resp.Sender, Addr: a})
+			kad.rt.update(c)
 		}
 	}
 	kad.lookup(kad.myid, modeFindNode) // 自查找以填充路由表

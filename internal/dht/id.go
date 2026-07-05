@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/bits"
+	"strconv"
 )
 
 // idLen 是节点/内容标识的字节长度（256 bit），与 SHA-256 输出对齐，
@@ -12,6 +13,23 @@ import (
 const idLen = 32
 
 type ID [idLen]byte
+
+func (id ID) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(id.String())), nil
+}
+
+func (id *ID) UnmarshalJSON(data []byte) error {
+	str, err := strconv.Unquote(string(data))
+	if err != nil {
+		return err
+	}
+	tempid, err := ParseID(str)
+	if err != nil {
+		return err
+	}
+	*id = tempid
+	return nil
+}
 
 func ParseID(s string) (ID, error) {
 	var id ID

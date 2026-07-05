@@ -68,11 +68,13 @@ func (n *Node) handle(remote net.Addr, msg *dht.Message) *dht.Message {
 	return n.kad.HandleRPC(remote, msg)
 }
 
-func (n *Node) Start(ctx context.Context)                     { go n.t.Serve(ctx) }
-func (n *Node) Bootstrap(ctx context.Context, addrs []string) { _ = n.kad.Bootstrap(ctx, addrs) }
-func (n *Node) Myid() dht.ID                                  { return n.myid }
-func (n *Node) Peers() []dht.Contact                          { return n.kad.Peers() }
-func (n *Node) Manifests() []*Manifest                        { return n.store.Manifests() }
+func (n *Node) Start(ctx context.Context) { go n.t.Serve(ctx) }
+func (n *Node) Myid() dht.ID              { return n.myid }
+func (n *Node) Peers() []dht.Contact      { return n.kad.Peers() }
+func (n *Node) Manifests() []*Manifest    { return n.store.Manifests() }
+func (n *Node) Bootstrap(ctx context.Context, contacts []dht.Contact) error {
+	return n.kad.Bootstrap(ctx, contacts)
+}
 
 // Publish 切分文件、入库、把 Manifest 存入 DHT 并宣告 provider。
 func (n *Node) Publish(path string) (dht.ID, *Manifest, error) {
@@ -166,7 +168,7 @@ func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (stri
 		var got []byte
 		for _, p := range providers {
 			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			resp, rerr := n.t.Send(cctx, p.Addr, &dht.Message{Type: dht.TypeGetChunk, Key: cid, Sender: n.myid})
+			resp, rerr := n.t.Send(cctx, p, &dht.Message{Type: dht.TypeGetChunk, Key: cid})
 			cancel()
 			if rerr != nil || resp == nil || resp.Error != "" || !resp.Found {
 				continue

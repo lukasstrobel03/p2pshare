@@ -119,6 +119,16 @@ func (s *Server) dispatch(method string, params json.RawMessage) (interface{}, *
 		}
 		return map[string]interface{}{"ok": true, "output": filepath.Join(p.OutDir, filename)}, nil
 
+	case "bootstrap":
+		var p []dht.Contact
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &rpcError{-32602, "invalid params: need [{id, addr}]"}
+		}
+		err := s.node.Bootstrap(context.Background(), p)
+		if err != nil {
+			return nil, &rpcError{-32000, err.Error()}
+		}
+		return map[string]interface{}{"ok": true}, nil
 	default:
 		return nil, &rpcError{-32601, "method not found"}
 	}

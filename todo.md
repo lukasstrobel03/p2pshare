@@ -1,6 +1,4 @@
 - 把 *transport.go* 中关于节点的部分全部转移到 `node`，所有方法私有化。transport.go 应该是 `dht` 包的内部工具。`node` 不应该直接调用 *transport.go* 中的任何方法
-- *transport.go* 中的 `PeerID` 方法目前无人调用，这部分逻辑需要修复
-- 如果这部分修复了，那么 `Bootstrap` 也需要验证才能进行连接，因此 `Bootstrap` 的参数需要对端 ID
 - `manifest` 需要持久化，而且目前看起来文件和块的逻辑是有问题的
 - 任何 `New` 方法都不应该监听端口
 - `main` 里的东西太多了，良好的封装不应该暴露这么多东西

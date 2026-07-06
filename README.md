@@ -33,3 +33,13 @@ go install ./cmd/...
 ```
 
 ## Usage
+
+```
+Usage of p2pshare:
+  -addr string
+        QUIC listen address (default ":9000")
+  -data string
+        Data directory (default "./p2pdata")
+  -rpc string
+        HTTP JSON-RPC address (default "127.0.0.1:8000")
+```

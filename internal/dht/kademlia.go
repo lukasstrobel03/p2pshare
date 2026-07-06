@@ -3,7 +3,9 @@ package dht
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -22,11 +24,6 @@ type valueEntry struct {
 	exp  time.Time
 }
 
-type providerEntry struct {
-	c   Contact
-	exp time.Time
-}
-
 type GetChunk func(id ID) ([]byte, error)
 type ValueSource func(key ID) ([]byte, bool)
 
@@ -36,7 +33,7 @@ type Kademlia struct {
 
 	mu        sync.Mutex
 	values    map[ID]valueEntry
-	providers map[ID][]providerEntry
+	providers map[ID]map[Contact]time.Time
 
 	getChunk   GetChunk
 	localValue ValueSource // 新增
@@ -66,7 +63,7 @@ func StartKademlia(listenAddr, certDir string, ctx context.Context) (*Kademlia, 
 		t:         t,
 		rt:        newRoutingTable(t, k),
 		values:    make(map[ID]valueEntry),
-		providers: make(map[ID][]providerEntry),
+		providers: make(map[ID]map[Contact]time.Time),
 	}
 	t.setHandler(kad.HandleRPC)
 	return kad, nil
@@ -146,24 +143,30 @@ func (kad *Kademlia) addProvider(k ID, c Contact) {
 		return
 	}
 	kad.mu.Lock()
-	kad.providers[k] = append(kad.providers[k], providerEntry{c: c, exp: time.Now().Add(providerTTL)})
-	kad.mu.Unlock()
+	defer kad.mu.Unlock()
+	m, ok := kad.providers[k]
+	if !ok {
+		m = make(map[Contact]time.Time)
+		kad.providers[k] = m
+	}
+	m[c] = time.Now().Add(providerTTL)
 }
 
 func (kad *Kademlia) localProviders(k ID) []Contact {
 	kad.mu.Lock()
 	defer kad.mu.Unlock()
-	m := kad.providers[k]
+	m, ok := kad.providers[k]
+	if !ok {
+		return nil
+	}
 	var out []Contact
 	now := time.Now()
-	for iter := len(m) - 1; iter >= 0; iter-- {
-		if now.After(m[iter].exp) {
-			// delete m[iter] from the slice
-			m[iter] = m[len(m)-1]
-			m = m[:len(m)-1]
+	for c, exp := range m {
+		if now.After(exp) {
+			delete(m, c)
 			continue
 		}
-		out = append(out, m[iter].c)
+		out = append(out, c)
 	}
 	return out
 }
@@ -201,7 +204,7 @@ type lookupOutcome struct {
 func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 	sl := newShortlist(target)
 	sl.push(kad.rt.closest(target, k))
-	provs := []Contact{}
+	provs := make(map[Contact]struct{})
 
 	for {
 		batch := sl.selectAlpha(alpha)
@@ -240,7 +243,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 					if p.Addr == "" {
 						p.Addr = r.from.Addr
 					}
-					provs = append(provs, p)
+					provs[p] = struct{}{}
 				}
 			}
 			sl.push(r.msg.Contacts)
@@ -248,7 +251,7 @@ func (kad *Kademlia) lookup(target ID, mode lookupMode) lookupOutcome {
 	}
 
 	out := lookupOutcome{closest: sl.closest(k)}
-	out.providers = provs
+	out.providers = slices.Collect(maps.Keys(provs))
 	return out
 }
 
@@ -307,15 +310,15 @@ func (kad *Kademlia) Announce(key ID) int {
 }
 
 func (kad *Kademlia) FindProviders(key ID) []Contact {
-	res := []Contact{}
+	res := make(map[Contact]struct{})
 	for _, c := range kad.localProviders(key) {
-		res = append(res, c)
+		res[c] = struct{}{}
 	}
 	out := kad.lookup(key, modeProviders)
 	for _, c := range out.providers {
-		res = append(res, c)
+		res[c] = struct{}{}
 	}
-	return res
+	return slices.Collect(maps.Keys(res))
 }
 
 // ---------- shortlist：迭代查找的候选集 ----------

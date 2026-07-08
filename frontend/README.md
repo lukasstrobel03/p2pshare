@@ -40,3 +40,15 @@ pnpm dev
 ```sh
 pnpm build
 ```
+
+## Workflow with Git
+Create a branch for the issue you want to solve
+```sh
+git switch -c <branch-name>
+```
+After that you can publish the branch by clicking the little cloud symbol next to the Branch name in VSC (bottom left).
+
+Then, work on the issue and try to solve it correctly.
+When ready, push everything with a commit message that shortly summarizes all the things you have done. If there are a lot of files, split it up in smaller single commits on the branch.
+
+Create a merge request with destination base:team-dev. Then I can have a quick look and comment on things that could be written better or if I have some ideas.

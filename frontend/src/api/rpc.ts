@@ -1,4 +1,4 @@
-import type { FileInfo, Transfer } from './types'
+import type { BootstrapResult, DownloadResult, FileInfo, NetworkStatus, Peer, PublishResult, Transfer } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
@@ -25,8 +25,51 @@ const mockTransfers: Transfer[] = [
   { id: '3', name: 'musik_album.zip', direction: 'download', progress: 15, status: 'stopped', peers: 0, errorMessage: 'Keine Peers gefunden' },
 ]
 
+const mockStatus: NetworkStatus = {
+  id: '06ba16f807e192bc0cc9b000aa7ea51c37a01c01b01e228806f468b525488393',
+  peers: 3,
+}
+
+const mockPeers: Peer[] = [
+  { id: '06ba16f807e192bc0cc9b000aa7ea51c37a01c01b01e228806f468b525488393', addr: '1.1.1.1:2222' },
+  { id: 'd397d953824bc224b2098a45cbc81bbdcec7b9c7f22dd503b9aa8917e100cb2d', addr: '2.2.2.2:3333' },
+  { id: 'c2c3b8feacb50670550e1ef18d96b266b656ed11149df3cf514b9aa6e37f1105', addr: '3.3.3.3:4444' },
+]
+
 async function mockDelay<T>(value: T, ms = 400): Promise<T> {
   return new Promise(resolve => setTimeout(() => resolve(value), ms))
+}
+
+async function mockError(message: string, ms = 400): Promise<never> {
+  await mockDelay(null, ms)
+  throw new Error(message)
+}
+
+function mockPublish(path: string): Promise<PublishResult> {
+  const name = path.split(/[\\/]/).pop() || path
+  const size = 50_000 + Math.floor(Math.random() * 4_950_000)
+  const chunk_size = 262144
+  const chunkCount = Math.ceil(size / chunk_size)
+  const chunks = Array.from({ length: chunkCount }, () => crypto.randomUUID().replace(/-/g, ''))
+  const id = crypto.randomUUID().replace(/-/g, '')
+
+  mockFiles.push({ id, name, size, chunk_size, chunks: chunkCount })
+
+  return mockDelay({ id, manifest: { name, size, chunk_size, chunks } }, 800)
+}
+
+function mockDownload(id: string, outdir: string): Promise<DownloadResult> {
+  const file = mockFiles.find(f => f.id === id)
+  if (!file) return mockError('Keine Peers gefunden', 800)
+  return mockDelay({ ok: true, output: `${outdir}/${file.name}` }, 800)
+}
+
+function mockBootstrap(peer: Peer): Promise<BootstrapResult> {
+  if (!mockPeers.some(p => p.id === peer.id)) {
+    mockPeers.push(peer)
+    mockStatus.peers = mockPeers.length
+  }
+  return mockDelay({ ok: true }, 800)
 }
 
 export const rpc = {
@@ -34,4 +77,14 @@ export const rpc = {
     USE_MOCK ? mockDelay(mockFiles) : rpcCall<FileInfo[]>('listFiles'),
   listTransfers: (): Promise<Transfer[]> =>
     USE_MOCK ? mockDelay(mockTransfers) : rpcCall<Transfer[]>('listTransfers'),
+  status: (): Promise<NetworkStatus> =>
+    USE_MOCK ? mockDelay(mockStatus) : rpcCall<NetworkStatus>('status'),
+  peers: (): Promise<Peer[]> =>
+    USE_MOCK ? mockDelay(mockPeers) : rpcCall<Peer[]>('peers'),
+  publish: (path: string): Promise<PublishResult> =>
+    USE_MOCK ? mockPublish(path) : rpcCall<PublishResult>('publish', { path }),
+  download: (id: string, outdir: string): Promise<DownloadResult> =>
+    USE_MOCK ? mockDownload(id, outdir) : rpcCall<DownloadResult>('download', { id, outdir }),
+  bootstrap: (peer: Peer): Promise<BootstrapResult> =>
+    USE_MOCK ? mockBootstrap(peer) : rpcCall<BootstrapResult>('bootstrap', [peer]),
 }

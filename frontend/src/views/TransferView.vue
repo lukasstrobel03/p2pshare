@@ -6,10 +6,58 @@ const store = useTransfersStore()
 onMounted(() => store.fetchTransfers())
 
 const tab = ref('active')
+
+const downloadForm = ref()
+const downloadId = ref('')
+const downloadOutdir = ref('')
+const requiredRule = [(v: string) => !!v || 'Pflichtfeld']
+
+async function onDownload() {
+  const { valid } = await downloadForm.value.validate()
+  if (!valid) return
+  await store.startDownload(downloadId.value, downloadOutdir.value)
+  if (!store.downloadError) {
+    downloadId.value = ''
+    downloadOutdir.value = ''
+  }
+}
 </script>
 
 <template>
   <v-container>
+    <v-card class="mb-4">
+      <v-card-title>Download starten</v-card-title>
+      <v-card-text>
+        <v-form ref="downloadForm" @submit.prevent="onDownload">
+          <v-text-field
+            v-model="downloadId"
+            label="File-ID"
+            placeholder="06ba16f807e192bc0cc9b000aa7ea51c37a01c01b01e228806f468b525488393"
+            :rules="requiredRule"
+            :disabled="store.downloading"
+          />
+          <v-text-field
+            v-model="downloadOutdir"
+            label="Zielordner"
+            placeholder="./data"
+            :rules="requiredRule"
+            :disabled="store.downloading"
+          />
+          <v-btn type="submit" color="primary" :loading="store.downloading">
+            Download starten
+          </v-btn>
+        </v-form>
+
+        <v-alert v-if="store.downloadError" type="error" class="mt-4">
+          {{ store.downloadError }}
+        </v-alert>
+
+        <v-alert v-if="store.downloadResult" type="success" class="mt-4">
+          Download gestartet — Ziel: {{ store.downloadResult.output }}
+        </v-alert>
+      </v-card-text>
+    </v-card>
+
     <v-alert v-if="store.error" type="error" class="mb-4">
       {{ store.error }}
     </v-alert>

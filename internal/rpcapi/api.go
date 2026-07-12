@@ -14,6 +14,13 @@ const (
 	MethodPublish   = "publish"
 	MethodDownload  = "download"
 	MethodBootstrap = "bootstrap"
+
+	// Async variants of publish/download: they return immediately with a
+	// JobID; poll jobStatus with that ID to track progress and get the
+	// final result (shaped like PublishResult/DownloadResult respectively).
+	MethodPublishAsync  = "publishAsync"
+	MethodDownloadAsync = "downloadAsync"
+	MethodJobStatus     = "jobStatus"
 )
 
 type RpcRequest struct {
@@ -77,4 +84,44 @@ type BootstrapParams []dht.Contact
 
 type BootstrapResult struct {
 	OK bool `json:"ok"`
+}
+
+// JobID identifies an asynchronous publishAsync/downloadAsync operation.
+type JobID string
+
+// JobState is the lifecycle state of an asynchronous job.
+type JobState string
+
+const (
+	JobRunning JobState = "running"
+	JobDone    JobState = "done"
+	JobError   JobState = "error"
+)
+
+// PublishAsyncResult / DownloadAsyncResult: publishAsync reuses PublishParams
+// and downloadAsync reuses DownloadParams, since the inputs are identical to
+// their synchronous counterparts - only the response (a JobID instead of the
+// final result) differs.
+type PublishAsyncResult struct {
+	JobID JobID `json:"job_id"`
+}
+
+type DownloadAsyncResult struct {
+	JobID JobID `json:"job_id"`
+}
+
+type JobStatusParams struct {
+	JobID JobID `json:"job_id"`
+}
+
+// JobStatusResult reports progress (Done/Total, in chunks) while State is
+// JobRunning. Once State is JobDone, Result holds the same shape as
+// PublishResult or DownloadResult (depending on the job's kind). Once State
+// is JobError, Error holds the failure message.
+type JobStatusResult struct {
+	State  JobState `json:"state"`
+	Done   int      `json:"done"`
+	Total  int      `json:"total"`
+	Result any      `json:"result,omitempty"`
+	Error  string   `json:"error,omitempty"`
 }

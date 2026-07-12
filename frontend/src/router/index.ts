@@ -1,27 +1,26 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import FilesView from '@/views/FilesView.vue'
+import PeersView from '@/views/PeersView.vue'
+import BootstrapView from '@/views/BootstrapView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    {
-      path: '/',
-      redirect: '/network'
+    { 
+      path: '/', 
+      name: 'files', 
+      component: FilesView 
     },
-    {
-      path: '/network',
-      name: 'Network',
-      component: () => import('@/views/NetworkView.vue')
+    { 
+      path: '/peers', 
+      name: 'peers', 
+      component: PeersView 
     },
-    {
-      path: '/transfers',
-      name: 'Transfers',
-      component: () => import('@/views/TransferView.vue')
+    { 
+      path: '/bootstrap', 
+      name: 'bootstrap', 
+      component: BootstrapView 
     },
-    {
-      path: '/files',
-      name: 'Files',
-      component: () => import('@/views/MyFilesView.vue')
-    }
   ],
 })
 

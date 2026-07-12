@@ -18,13 +18,6 @@ type Server struct {
 	jobs *jobStore
 }
 
-// ---------- Async jobs (publishAsync/downloadAsync + jobStatus) ----------
-//
-// A job runs the (potentially long) Publish/Download call in a goroutine and
-// records progress so jobStatus can be polled over plain JSON-RPC, without
-// needing a streaming transport. Jobs are kept in memory for the lifetime of
-// the process; there's currently no cleanup/expiry, which is fine for a demo
-// but would need addressing for long-running production use.
 type jobEntry struct {
 	mu     sync.Mutex
 	state  JobState
@@ -220,9 +213,6 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		}
 		jobID, entry := s.jobs.create()
 		go func() {
-			// A background context: the download must keep running for as
-			// long as it takes, independent of this HTTP request's lifetime
-			// (which ends the moment we return the JobID below).
 			filename, err := s.node.Download(context.Background(), p.ID, p.OutDir, entry.progress)
 			if err != nil {
 				entry.finish(nil, err)

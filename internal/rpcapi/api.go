@@ -8,16 +8,12 @@ import (
 )
 
 const (
-	MethodStatus    = "status"
-	MethodPeers     = "peers"
-	MethodListFiles = "listFiles"
-	MethodPublish   = "publish"
-	MethodDownload  = "download"
-	MethodBootstrap = "bootstrap"
-
-	// Async variants of publish/download: they return immediately with a
-	// JobID; poll jobStatus with that ID to track progress and get the
-	// final result (shaped like PublishResult/DownloadResult respectively).
+	MethodStatus        = "status"
+	MethodPeers         = "peers"
+	MethodListFiles     = "listFiles"
+	MethodPublish       = "publish"
+	MethodDownload      = "download"
+	MethodBootstrap     = "bootstrap"
 	MethodPublishAsync  = "publishAsync"
 	MethodDownloadAsync = "downloadAsync"
 	MethodJobStatus     = "jobStatus"
@@ -86,10 +82,7 @@ type BootstrapResult struct {
 	OK bool `json:"ok"`
 }
 
-// JobID identifies an asynchronous publishAsync/downloadAsync operation.
 type JobID string
-
-// JobState is the lifecycle state of an asynchronous job.
 type JobState string
 
 const (
@@ -98,10 +91,6 @@ const (
 	JobError   JobState = "error"
 )
 
-// PublishAsyncResult / DownloadAsyncResult: publishAsync reuses PublishParams
-// and downloadAsync reuses DownloadParams, since the inputs are identical to
-// their synchronous counterparts - only the response (a JobID instead of the
-// final result) differs.
 type PublishAsyncResult struct {
 	JobID JobID `json:"job_id"`
 }
@@ -114,10 +103,6 @@ type JobStatusParams struct {
 	JobID JobID `json:"job_id"`
 }
 
-// JobStatusResult reports progress (Done/Total, in chunks) while State is
-// JobRunning. Once State is JobDone, Result holds the same shape as
-// PublishResult or DownloadResult (depending on the job's kind). Once State
-// is JobError, Error holds the failure message.
 type JobStatusResult struct {
 	State  JobState `json:"state"`
 	Done   int      `json:"done"`

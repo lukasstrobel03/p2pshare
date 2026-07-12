@@ -8,12 +8,15 @@ import (
 )
 
 const (
-	MethodStatus    = "status"
-	MethodPeers     = "peers"
-	MethodListFiles = "listFiles"
-	MethodPublish   = "publish"
-	MethodDownload  = "download"
-	MethodBootstrap = "bootstrap"
+	MethodStatus        = "status"
+	MethodPeers         = "peers"
+	MethodListFiles     = "listFiles"
+	MethodPublish       = "publish"
+	MethodDownload      = "download"
+	MethodBootstrap     = "bootstrap"
+	MethodPublishAsync  = "publishAsync"
+	MethodDownloadAsync = "downloadAsync"
+	MethodJobStatus     = "jobStatus"
 )
 
 type RpcRequest struct {
@@ -77,4 +80,33 @@ type BootstrapParams []dht.Contact
 
 type BootstrapResult struct {
 	OK bool `json:"ok"`
+}
+
+type JobID string
+type JobState string
+
+const (
+	JobRunning JobState = "running"
+	JobDone    JobState = "done"
+	JobError   JobState = "error"
+)
+
+type PublishAsyncResult struct {
+	JobID JobID `json:"job_id"`
+}
+
+type DownloadAsyncResult struct {
+	JobID JobID `json:"job_id"`
+}
+
+type JobStatusParams struct {
+	JobID JobID `json:"job_id"`
+}
+
+type JobStatusResult struct {
+	State  JobState `json:"state"`
+	Done   int      `json:"done"`
+	Total  int      `json:"total"`
+	Result any      `json:"result,omitempty"`
+	Error  string   `json:"error,omitempty"`
 }

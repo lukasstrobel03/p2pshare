@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"p2pshare/internal/dht"
 	"p2pshare/internal/rpcapi"
@@ -61,8 +62,13 @@ func main() {
 			fatalf("Usage: p2pc publish <path>")
 		}
 		params := &rpcapi.PublishParams{Path: cmdArgs[0]}
+		var start rpcapi.PublishAsyncResult
+		callRPC(apiAddress, rpcapi.MethodPublishAsync, params, &start)
+		resultBytes := pollJob(apiAddress, start.JobID, "Publishing")
 		var res rpcapi.PublishResult
-		callRPC(apiAddress, command, params, &res)
+		if err := json.Unmarshal(resultBytes, &res); err != nil {
+			fatalf("Failed to parse result: %v", err)
+		}
 		fmt.Println("Publish")
 		fmt.Printf("  ID: %v\n", res.ID)
 		fmt.Printf("  Name: %s\n", res.Manifest.Name)
@@ -84,8 +90,13 @@ func main() {
 		if len(cmdArgs) == 2 {
 			params.OutDir = cmdArgs[1]
 		}
+		var start rpcapi.DownloadAsyncResult
+		callRPC(apiAddress, rpcapi.MethodDownloadAsync, params, &start)
+		resultBytes := pollJob(apiAddress, start.JobID, "Downloading")
 		var res rpcapi.DownloadResult
-		callRPC(apiAddress, command, params, &res)
+		if err := json.Unmarshal(resultBytes, &res); err != nil {
+			fatalf("Failed to parse result: %v", err)
+		}
 		if res.OK {
 			fmt.Println("Download complete")
 			fmt.Printf("  Saved to: %s\n", res.Output)
@@ -162,6 +173,41 @@ func callRPC(addr string, method string, params any, result any) {
 			fatalf("Failed to parse result into struct: %v", err)
 		}
 	}
+}
+
+func pollJob(addr string, jobID rpcapi.JobID, label string) json.RawMessage {
+	const pollInterval = 300 * time.Millisecond
+	for {
+		var status rpcapi.JobStatusResult
+		callRPC(addr, rpcapi.MethodJobStatus, &rpcapi.JobStatusParams{JobID: jobID}, &status)
+
+		switch status.State {
+		case rpcapi.JobRunning:
+			printProgress(label, status.Done, status.Total)
+			time.Sleep(pollInterval)
+		case rpcapi.JobDone:
+			printProgress(label, status.Total, status.Total)
+			fmt.Fprintln(os.Stderr)
+			b, err := json.Marshal(status.Result)
+			if err != nil {
+				fatalf("Failed to encode job result: %v", err)
+			}
+			return b
+		case rpcapi.JobError:
+			fmt.Fprintln(os.Stderr)
+			fatalf("%s failed: %s", label, status.Error)
+		default:
+			fatalf("Unknown job state: %s", status.State)
+		}
+	}
+}
+
+func printProgress(label string, done, total int) {
+	pct := 0
+	if total > 0 {
+		pct = done * 100 / total
+	}
+	fmt.Fprintf(os.Stderr, "\r%s: %d/%d chunks (%d%%)", label, done, total, pct)
 }
 
 func formatBytes(b int64) string {

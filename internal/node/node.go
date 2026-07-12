@@ -13,11 +13,15 @@ import (
 )
 
 const (
-	minChunkSize      = 1 << 14 // 16 KiB
-	maxChunkSize      = 1 << 20 // 1 MiB
-	concurrency       = 10
-	republishInterval = 30 * time.Second
+	minChunkSize = 1 << 14 // 16 KiB
+	maxChunkSize = 1 << 20 // 1 MiB
+	concurrency  = 10
+	// one cycle is occasionally delayed. A third of the TTL is the common
+	// rule of thumb for this kind of soft-state refresh.
+	republishInterval = 10 * time.Minute
 )
+
+type ProgressFunc func(done, total int)
 
 // Node combines Kademlia DHT with file storage/transfer.
 type Node struct {
@@ -49,7 +53,8 @@ func (n *Node) Bootstrap(ctx context.Context, contacts []dht.Contact) int {
 }
 
 // Publish splits the file, stores it, saves the Manifest to the DHT, and announces provider.
-func (n *Node) Publish(path string) (dht.ID, *Manifest, error) {
+// progress may be nil.
+func (n *Node) Publish(path string, progress ProgressFunc) (dht.ID, *Manifest, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return dht.ID{}, nil, err
@@ -63,8 +68,10 @@ func (n *Node) Publish(path string) (dht.ID, *Manifest, error) {
 		return dht.ID{}, nil, fmt.Errorf("%s is not a regular file", path)
 	}
 
-	var chunks []dht.ID
 	chunkSize := min(max(fi.Size()/10, minChunkSize), maxChunkSize)
+	total := int((fi.Size() + chunkSize - 1) / chunkSize)
+
+	var chunks []dht.ID
 	buf := make([]byte, chunkSize)
 	for {
 		nr, rerr := io.ReadFull(f, buf)
@@ -77,6 +84,9 @@ func (n *Node) Publish(path string) (dht.ID, *Manifest, error) {
 			}
 			chunks = append(chunks, id)
 			go n.kad.Announce(id)
+			if progress != nil {
+				progress(len(chunks), total)
+			}
 		}
 		if rerr == io.EOF || rerr == io.ErrUnexpectedEOF {
 			break
@@ -137,8 +147,7 @@ func (n *Node) getManifest(ctx context.Context, id dht.ID) (*Manifest, error) {
 	return &manifest, nil
 }
 
-// Download restores the file to outdir based on fileID.
-func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (string, error) {
+func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string, progress ProgressFunc) (string, error) {
 	// get the manifest
 	m, err := n.getManifest(ctx, fileID)
 	if err != nil {
@@ -146,6 +155,8 @@ func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (stri
 	}
 
 	// get chunks
+	total := len(m.Chunks)
+	done := 0
 	pool := make(chan struct{}, concurrency)
 	result := make(chan error, len(m.Chunks))
 	cctx, cancel := context.WithCancel(ctx)
@@ -177,9 +188,15 @@ func (n *Node) Download(ctx context.Context, fileID dht.ID, outdir string) (stri
 			if err != nil {
 				return "", err
 			}
+			done++
+			if progress != nil {
+				progress(done, total)
+			}
 		}
 	}
-	n.store.AddManifest(fileID, m)
+	if err := n.store.AddManifest(fileID, m); err != nil {
+		return "", err
+	}
 
 	// assemble the file
 	outdir = filepath.Clean(outdir)

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"p2pshare/internal/dht"
 	"p2pshare/internal/node"
 )
 
@@ -15,43 +14,24 @@ type Server struct {
 	node *node.Node
 }
 
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-	ID      interface{}     `json:"id"`
-}
-
-type rpcError struct {
-	Code    rpcErrorCode `json:"code"`
-	Message string       `json:"message"`
-}
-
-type rpcResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *rpcError   `json:"error,omitempty"`
-	ID      interface{} `json:"id"`
-}
-
-type rpcErrorCode int
-
 const (
-	rpcParseError     rpcErrorCode = -32700
-	rpcMethodNotFound rpcErrorCode = -32601
-	rpcInvalidParams  rpcErrorCode = -32602
-	rpcServerError    rpcErrorCode = -32000
+	rpcParseError     RpcErrorCode = -32700
+	rpcMethodNotFound RpcErrorCode = -32601
+	rpcInvalidParams  RpcErrorCode = -32602
+	rpcInternalError  RpcErrorCode = -32603
+	rpcServerError    RpcErrorCode = -32000
 )
 
-var rpcErrorMap = map[rpcErrorCode]string{
+var rpcErrorMap = map[RpcErrorCode]string{
 	rpcParseError:     "Parse Error",
 	rpcMethodNotFound: "Method Not Found",
 	rpcInvalidParams:  "Invalid Params",
+	rpcInternalError:  "Internal Error",
 	rpcServerError:    "Server Error",
 }
 
-func newRpcError(code rpcErrorCode, msg string) *rpcError {
-	e := &rpcError{Code: code, Message: rpcErrorMap[code]}
+func newRpcError(code RpcErrorCode, msg string) *RpcError {
+	e := &RpcError{Code: code, Message: rpcErrorMap[code]}
 	if msg != "" {
 		e.Message += ": " + msg
 	}
@@ -72,51 +52,58 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req rpcRequest
+	var req RpcRequest
+	resp := &RpcResponse{JSONRPC: "2.0"}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, rpcResponse{JSONRPC: "2.0", Error: newRpcError(rpcParseError, "")})
+		resp.Error = newRpcError(rpcParseError, err.Error())
+		writeJSON(w, resp)
 		return
 	}
 
-	result, rerr := s.dispatch(r.Context(), req.Method, req.Params)
-	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
-	if rerr != nil {
-		resp.Error = rerr
+	resp.ID = req.ID
+	result, err := s.dispatch(r.Context(), req.Method, req.Params)
+	if err != nil {
+		resp.Error = err
 	} else {
-		resp.Result = result
+		rb, err := json.Marshal(result)
+		if err != nil {
+			resp.Error = newRpcError(rpcInternalError, err.Error())
+		} else {
+			resp.Result = rb
+		}
 	}
 	writeJSON(w, resp)
 }
 
-func (s *Server) dispatch(ctx context.Context, method string, params json.RawMessage) (interface{}, *rpcError) {
+func (s *Server) dispatch(ctx context.Context, method string, params json.RawMessage) (any, *RpcError) {
 	switch method {
-	case "status":
-		id := s.node.MyID()
-		return map[string]interface{}{
-			"id":    id.String(),
-			"peers": len(s.node.Peers()),
+	case MethodStatus:
+		return &StatusResult{
+			ID:    s.node.MyID(),
+			Peers: len(s.node.Peers()),
 		}, nil
 
-	case "peers":
-		return s.node.Peers(), nil
+	case MethodPeers:
+		return PeersResult(s.node.Peers()), nil
 
-	case "listFiles":
-		var out []map[string]interface{}
+	case MethodListFiles:
+		var result ListFilesResult
 		for id, m := range s.node.Manifests() {
-			out = append(out, map[string]interface{}{
-				"id":         id.String(),
-				"name":       m.Name,
-				"size":       m.Size,
-				"chunk_size": m.ChunkSize,
-				"chunks":     len(m.Chunks),
+			result = append(result, &ListFilesResultEntry{
+				ID:        id,
+				Name:      m.Name,
+				Size:      m.Size,
+				ChunkSize: m.ChunkSize,
+				Chunks:    len(m.Chunks),
 			})
 		}
-		return out, nil
-
-	case "publish":
-		var p struct {
-			Path string `json:"path"`
+		if len(result) == 0 {
+			result = ListFilesResult{}
 		}
+		return result, nil
+
+	case MethodPublish:
+		var p PublishParams
 		if err := json.Unmarshal(params, &p); err != nil || p.Path == "" {
 			return nil, newRpcError(rpcInvalidParams, "need {path}")
 		}
@@ -124,39 +111,32 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		if err != nil {
 			return nil, newRpcError(rpcServerError, err.Error())
 		}
-		return map[string]interface{}{"id": fh.String(), "manifest": m}, nil
+		return &PublishResult{ID: fh, Manifest: m}, nil
 
-	case "download":
-		var p struct {
-			FileID string `json:"id"`
-			OutDir string `json:"outdir"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil || p.FileID == "" {
+	case MethodDownload:
+		var p DownloadParams
+		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, newRpcError(rpcInvalidParams, "need {id, outdir}")
 		}
-		id, err := dht.ParseID(p.FileID)
+		filename, err := s.node.Download(ctx, p.ID, p.OutDir)
 		if err != nil {
 			return nil, newRpcError(rpcServerError, err.Error())
 		}
-		filename, err := s.node.Download(ctx, id, p.OutDir)
-		if err != nil {
-			return nil, newRpcError(rpcServerError, err.Error())
-		}
-		return map[string]interface{}{"ok": true, "output": filepath.Join(p.OutDir, filename)}, nil
+		return &DownloadResult{OK: true, Output: filepath.Join(p.OutDir, filename)}, nil
 
-	case "bootstrap":
-		var p []dht.Contact
+	case MethodBootstrap:
+		var p BootstrapParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, newRpcError(rpcInvalidParams, "need [{id, addr}]")
 		}
 		ok := s.node.Bootstrap(ctx, p) > 0
-		return map[string]interface{}{"ok": ok}, nil
+		return &BootstrapResult{OK: ok}, nil
 	default:
 		return nil, newRpcError(rpcMethodNotFound, "")
 	}
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }

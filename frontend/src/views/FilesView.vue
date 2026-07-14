@@ -4,7 +4,7 @@ import { useFilesStore } from '@/stores/files.ts'
 import { copyToClipboard, formatBytes, truncateId } from '@/utils/format.ts'
 import PublishDialog from '@/components/PublishDialog.vue'
 import DownloadDialog from '@/components/DownloadDialog.vue'
-import TaskProgressList from '@/components/TaskProgressList.vue'
+// import TaskProgressList from '@/components/TaskProgressList.vue'
 
 const filesStore = useFilesStore()
 
@@ -56,11 +56,11 @@ onUnmounted(() => {
     <v-alert v-if="filesStore.error" type="error" variant="tonal" class="mb-4" closable>
       {{ filesStore.error }}
     </v-alert>
-
+    <!--
     <v-card v-if="filesStore.tasks.length" class="mb-4" variant="outlined">
       <TaskProgressList :tasks="filesStore.tasks" @dismiss="filesStore.dismissTask" />
     </v-card>
-
+  -->
     <v-card variant="outlined">
       <v-data-table
         :headers="headers"

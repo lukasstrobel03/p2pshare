@@ -1,15 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { rpcCall } from '@/api/rpc.ts'
-import { waitForJob } from './jobPolling.ts'
-import type {
-  DownloadAsyncResult,
-  DownloadResult,
-  ListFilesResult,
-  ListFilesResultEntry,
-  PublishAsyncResult,
-  PublishResult,
-} from '@/api/types.ts'
+import { rpcCall } from '@/api/rpc'
+import { useCatalogStore } from './catalog.ts'
+import type { DownloadResult, ListFilesResult, ListFilesResultEntry, PublishResult } from '@/api/types'
 
 export type TaskKind = 'publish' | 'download'
 export type TaskStatus = 'running' | 'done' | 'error'
@@ -25,11 +18,10 @@ export interface Task {
 }
 
 export const useFilesStore = defineStore('files', () => {
+  const catalog = useCatalogStore()
   const files = ref<ListFilesResultEntry[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
-  // Ongoing/finished publish+download operations, newest first. Shown as a
-  // small progress panel, similar to Flood's active-transfer list.
   const tasks = ref<Task[]>([])
 
   async function refresh() {
@@ -37,6 +29,7 @@ export const useFilesStore = defineStore('files', () => {
     error.value = null
     try {
       files.value = await rpcCall<ListFilesResult>('listFiles')
+      for (const f of files.value) catalog.remember(f.id, f.name)
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
@@ -54,17 +47,29 @@ export const useFilesStore = defineStore('files', () => {
     tasks.value = tasks.value.filter((t) => t.id !== id)
   }
 
-  /** path is a filesystem path on the machine the node process runs on. */
   async function publish(path: string): Promise<PublishResult> {
     const label = path.split(/[/\\]/).pop() || path
     const task = addTask('publish', label)
     try {
-      const start = await rpcCall<PublishAsyncResult>('publish', { path })
-      const result = await waitForJob<PublishResult>(start.job_id, (p) => {
-        task.done = p.done
-        task.total = p.total
-      })
+      const result = await rpcCall<PublishResult>('publish', { path })
       task.status = 'done'
+      catalog.remember(result.id, result.manifest.name)
+      await refresh()
+      return result
+    } catch (e) {
+      task.status = 'error'
+      task.error = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  }
+
+  async function publishUpload(name: string, dataBase64: string): Promise<PublishResult> {
+    const task = addTask('publish', name)
+    try {
+      const result = await rpcCall<PublishResult>('publishFrontend', { name, data: dataBase64 })
+      console.log(result)
+      task.status = 'done'
+      catalog.remember(result.id, result.manifest.name)
       await refresh()
       return result
     } catch (e) {
@@ -75,13 +80,9 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function download(id: string, outdir: string): Promise<DownloadResult> {
-    const task = addTask('download', `${id.slice(0, 12)}…`)
+    const task = addTask('download', catalog.nameFor(id) ?? `${id.slice(0, 12)}…`)
     try {
-      const start = await rpcCall<DownloadAsyncResult>('downloadAsync', { id, outdir })
-      const result = await waitForJob<DownloadResult>(start.job_id, (p) => {
-        task.done = p.done
-        task.total = p.total
-      })
+      const result = await rpcCall<DownloadResult>('download', { id, outdir })
       task.status = 'done'
       await refresh()
       return result
@@ -92,5 +93,5 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  return { files, loading, error, tasks, refresh, publish, download, dismissTask }
+  return { files, loading, error, tasks, refresh, publish, publishUpload, download, dismissTask }
 })

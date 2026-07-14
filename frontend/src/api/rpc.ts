@@ -1,5 +1,24 @@
+const STORAGE_KEY = 'p2pshare.rpcUrl'
 
-export const RPC_URL = import.meta.env.VITE_RPC_URL ?? 'http://127.0.0.1:8001/'
+function resolveRpcUrl(): string {
+  const fallback = import.meta.env.VITE_RPC_URL ?? 'http://127.0.0.1:8001/'
+  if (typeof window === 'undefined') return fallback
+
+  const fromQuery = new URLSearchParams(window.location.search).get('rpc')
+  if (fromQuery) {
+    sessionStorage.setItem(STORAGE_KEY, fromQuery)
+    return fromQuery
+  }
+  return sessionStorage.getItem(STORAGE_KEY) ?? fallback
+}
+
+export const RPC_URL = resolveRpcUrl()
+
+/** Switches this tab to a different node and reloads to pick it up. */
+export function setRpcUrl(url: string) {
+  sessionStorage.setItem(STORAGE_KEY, url)
+  window.location.reload()
+}
 
 export class RpcError extends Error {
   code: number
